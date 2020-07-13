@@ -175,6 +175,7 @@ class ProviderManager:
     @transaction.atomic
     def remove(self, request=None, user=None, from_sources=False):
         """Remove the provider with current_user."""
+        LOG.info(f"Attempting to remove Provider: {self.model.name}")
         current_user = user
         if current_user is None and request and request.user:
             current_user = request.user
