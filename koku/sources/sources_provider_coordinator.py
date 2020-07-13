@@ -37,39 +37,57 @@ class SourcesProviderCoordinatorError(ValidationError):
 class SourcesProviderCoordinator:
     """Coordinator to control source and provider operations."""
 
-    def __init__(self, source_id, auth_header):
+    def __init__(self, sources_obj):
         """Initialize the client."""
-        header = {"x-rh-identity": auth_header, "sources-client": "True"}
-        self._source_id = source_id
+        self.sources_obj = sources_obj
+        header = {"x-rh-identity": sources_obj.auth_header, "sources-client": "True"}
+        self._source_id = sources_obj.source_id
         self._identity_header = header
         self._provider_builder = ProviderBuilder(self._identity_header)
 
-    def create_account(self, name, provider_type, authentication, billing_source, source_uuid=None):
+
+class SourcesProviderCreator(SourcesProviderCoordinator):
+    def perform_operation(self):
         """Call to create provider."""
+        LOG.info(f"Creating Koku Provider for Source ID: {self._source_id}")
         try:
-            provider = self._provider_builder.create_provider(
-                name, provider_type, authentication, billing_source, source_uuid
-            )
+            provider = self._provider_builder.create_provider(self.sources_obj)
             add_provider_koku_uuid(self._source_id, provider.uuid)
         except ProviderBuilderError as provider_err:
             raise SourcesProviderCoordinatorError(str(provider_err))
+        LOG.info(f"Creating provider {provider.uuid} for Source ID: {self._source_id}")
         return provider
 
-    def update_account(self, provider_uuid, name, provider_type, authentication, billing_source):
+
+class SourcesProviderUpdater(SourcesProviderCoordinator):
+    def perform_operation(self):
         """Call to update provider."""
         try:
-            provider = self._provider_builder.update_provider(
-                provider_uuid, name, provider_type, authentication, billing_source
-            )
+            provider = self._provider_builder.update_provider(self.sources_obj)
             clear_update_flag(self._source_id)
         except ProviderBuilderError as provider_err:
             raise SourcesProviderCoordinatorError(str(provider_err))
+        LOG.info(f"Updating provider {provider.uuid} for Source ID: {self._source_id}")
         return provider
 
-    def destroy_account(self, provider_uuid):
+
+class SourcesProviderDestroyer(SourcesProviderCoordinator):
+    def perform_operation(self):
         """Call to destroy provider."""
         try:
-            self._provider_builder.destroy_provider(provider_uuid)
+            self._provider_builder.destroy_provider(self.sources_obj.koku_uuid)
             destroy_source_event(self._source_id)
         except ProviderBuilderError as provider_err:
             LOG.error(f"Failed to remove provider. Error: {str(provider_err)}")
+        LOG.info(f"Destroying provider {self.sources_obj.koku_uuid} for Source ID: {self._source_id}")
+
+
+def select_coordinator(sources_obj, operation):
+    if operation == "create":
+        return SourcesProviderCreator(sources_obj)
+    elif operation == "update":
+        return SourcesProviderUpdater(sources_obj)
+    elif operation == "destroy":
+        return SourcesProviderDestroyer(sources_obj)
+    else:
+        LOG.error(f"[select_coordinator] Unknown operation {operation}")
