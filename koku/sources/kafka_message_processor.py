@@ -60,11 +60,12 @@ class SourceDetails:
     def __init__(self, auth_header, source_id):
         sources_network = SourcesHTTPClient(auth_header, source_id)
         details = sources_network.get_source_details()
-        self.source_name = details.get("name")
+        self.name = details.get("name")
         self.source_type_id = int(details.get("source_type_id"))
         self.source_uuid = details.get("uid")
         self.source_type_name = sources_network.get_source_type_name(self.source_type_id)
         self.endpoint_id = sources_network.get_endpoint_id()
+        self.source_type = None
 
 
 class KafkaMessageProcessor:
@@ -73,12 +74,12 @@ class KafkaMessageProcessor:
             self.value = json.loads(msg.value().decode("utf-8"))
             LOG.debug(f"msg value: {str(self.value)}")
         except (AttributeError, ValueError, TypeError) as error:
-            LOG.error("Unable to load message: %s. Error: %s", str(msg.value), str(error))
+            LOG.error(f"Unable to load message: {msg.value}. Error: {error}")
             raise SourcesMessageError("Unable to load message")
         self.event_type = event_type
         self.offset = msg.offset()
         self.partition = msg.partition()
-        self.auth_header = _extract_from_header(msg.headers(), KAFKA_HDR_RH_IDENTITY)
+        self.auth_header = extract_from_header(msg.headers(), KAFKA_HDR_RH_IDENTITY)
         self.source_id = None
 
     def __repr__(self):
@@ -112,6 +113,7 @@ class AuthenticationMsgProcessor(KafkaMessageProcessor):
         if self.value.get("resource_type") == "Endpoint":
             self.resource_id = int(self.value.get("resource_id"))
             sources_network = SourcesHTTPClient(self.auth_header)
+            # can raise SourceNotFoundError or SourcesHTTPClientError
             self.source_id = sources_network.get_source_id_from_endpoint_id(self.resource_id)
 
     def process(self):
@@ -143,7 +145,7 @@ class SourceMsgProcessor(KafkaMessageProcessor):
             storage.enqueue_source_delete(self.source_id, self.offset)
 
 
-def _extract_from_header(headers, header_type):
+def extract_from_header(headers, header_type):
     """Retrieve information from Kafka Headers."""
     for header in headers:
         if header_type in header:
@@ -153,6 +155,22 @@ def _extract_from_header(headers, header_type):
                 else:
                     return item.decode("ascii")
     return None
+
+
+def get_authentication(source_type, sources_network):
+    if source_type == Provider.PROVIDER_OCP:
+        source_details = sources_network.get_source_details()
+        if source_details.get("source_ref"):
+            return {"resource_name": source_details.get("source_ref")}
+        else:
+            raise SourcesHTTPClientError("Unable to find Cluster ID")
+    elif source_type in (Provider.PROVIDER_AWS, Provider.PROVIDER_AWS_LOCAL):
+        return {"resource_name": sources_network.get_aws_role_arn()}
+    elif source_type in (Provider.PROVIDER_AZURE, Provider.PROVIDER_AZURE_LOCAL):
+        return {"credentials": sources_network.get_azure_credentials()}
+    else:
+        LOG.error(f"Unexpected source type: {source_type}")
+        return
 
 
 def save_auth_info(auth_header, source_id):
@@ -177,32 +195,23 @@ def save_auth_info(auth_header, source_id):
     """
     source_type = storage.get_source_type(source_id)
 
-    if source_type:
-        sources_network = SourcesHTTPClient(auth_header, source_id)
-    else:
+    if not source_type:
         LOG.info(f"Source ID not found for ID: {source_id}")
         return
 
+    sources_network = SourcesHTTPClient(auth_header, source_id)
+
     try:
-        if source_type == Provider.PROVIDER_OCP:
-            source_details = sources_network.get_source_details()
-            if source_details.get("source_ref"):
-                authentication = {"resource_name": source_details.get("source_ref")}
-            else:
-                raise SourcesHTTPClientError("Unable to find Cluster ID")
-        elif source_type in (Provider.PROVIDER_AWS, Provider.PROVIDER_AWS_LOCAL):
-            authentication = {"resource_name": sources_network.get_aws_role_arn()}
-        elif source_type in (Provider.PROVIDER_AZURE, Provider.PROVIDER_AZURE_LOCAL):
-            authentication = {"credentials": sources_network.get_azure_credentials()}
-        else:
-            LOG.error(f"Unexpected source type: {source_type}")
+        authentication = get_authentication(source_type, sources_network)
+    except SourcesHTTPClientError as error:
+        LOG.info(f"Authentication info not available for Source ID: {source_id}")
+        sources_network.set_source_status(error)
+    else:
+        if not authentication:
             return
         storage.add_provider_sources_auth_info(source_id, authentication)
         storage.clear_update_flag(source_id)
         LOG.info(f"Authentication attached to Source ID: {source_id}")
-    except SourcesHTTPClientError as error:
-        LOG.info(f"Authentication info not available for Source ID: {source_id}")
-        sources_network.set_source_status(str(error))
 
 
 def sources_network_info(source_id, auth_header):
@@ -229,8 +238,8 @@ def sources_network_info(source_id, auth_header):
         LOG.warning(f"Unable to find endpoint for Source ID: {source_id}")
         return
 
-    source_type = SOURCE_PROVIDER_MAP.get(details_obj.source_type_name)
-    if not source_type:
+    details_obj.source_type = SOURCE_PROVIDER_MAP.get(details_obj.source_type_name)
+    if not details_obj.source_type:
         LOG.warning(f"Unexpected source type ID: {details_obj.source_type_id}")
         return
 
@@ -240,7 +249,7 @@ def sources_network_info(source_id, auth_header):
 
 def create_msg_processor(msg, app_type_id):
     if msg.topic() == Config.SOURCES_TOPIC:
-        event_type = _extract_from_header(msg.headers(), KAFKA_HDR_EVENT_TYPE)
+        event_type = extract_from_header(msg.headers(), KAFKA_HDR_EVENT_TYPE)
         LOG.debug(f"event_type: {str(event_type)}")
         if event_type in (KAFKA_APPLICATION_CREATE, KAFKA_APPLICATION_DESTROY):
             return ApplicationMsgProcessor(msg, event_type, app_type_id)

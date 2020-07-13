@@ -80,7 +80,7 @@ class SourcesHTTPClient:
     def get_endpoint_id(self):
         """Get Sources Endpoint ID from Source ID."""
         endpoint_url = f"{self._base_url}/endpoints?filter[source_id]={self._source_id}"
-        r = self._get_network_response(endpoint_url, self._identity_header, "Unable to endpoint ID")
+        r = self._get_network_response(endpoint_url, self._identity_header, "Unable to get endpoint ID")
         if r.status_code == 404:
             raise SourceNotFoundError(f"Status Code: {r.status_code}")
         elif r.status_code != 200:
@@ -96,7 +96,7 @@ class SourcesHTTPClient:
     def get_source_id_from_endpoint_id(self, resource_id):
         """Get Source ID from Sources Endpoint ID."""
         endpoint_url = f"{self._base_url}/endpoints?filter[id]={resource_id}"
-        r = self._get_network_response(endpoint_url, self._identity_header, "Unable to source ID from endpoint ID")
+        r = self._get_network_response(endpoint_url, self._identity_header, "Unable to get source ID from endpoint ID")
         if r.status_code == 404:
             raise SourceNotFoundError(f"Status Code: {r.status_code}")
         elif r.status_code != 200:
