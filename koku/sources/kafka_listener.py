@@ -37,7 +37,6 @@ from django.dispatch import receiver
 from kafka.errors import KafkaError
 from rest_framework.exceptions import ValidationError
 
-from api.provider.models import Provider
 from api.provider.models import Sources
 from masu.prometheus_stats import KAFKA_CONNECTION_ERRORS_COUNTER
 from sources import storage
@@ -56,19 +55,6 @@ LOG = logging.getLogger(__name__)
 
 PROCESS_QUEUE = queue.PriorityQueue()
 COUNT = itertools.count()  # next(COUNT) returns next sequential number
-SOURCES_OCP_SOURCE_NAME = "openshift"
-SOURCES_AWS_SOURCE_NAME = "amazon"
-SOURCES_AWS_LOCAL_SOURCE_NAME = "amazon-local"
-SOURCES_AZURE_SOURCE_NAME = "azure"
-SOURCES_AZURE_LOCAL_SOURCE_NAME = "azure-local"
-
-SOURCE_PROVIDER_MAP = {
-    SOURCES_OCP_SOURCE_NAME: Provider.PROVIDER_OCP,
-    SOURCES_AWS_SOURCE_NAME: Provider.PROVIDER_AWS,
-    SOURCES_AWS_LOCAL_SOURCE_NAME: Provider.PROVIDER_AWS_LOCAL,
-    SOURCES_AZURE_SOURCE_NAME: Provider.PROVIDER_AZURE,
-    SOURCES_AZURE_LOCAL_SOURCE_NAME: Provider.PROVIDER_AZURE_LOCAL,
-}
 
 
 class SourcesIntegrationError(ValidationError):
@@ -146,96 +132,6 @@ def storage_callback(sender, instance, **kwargs):
         PROCESS_QUEUE.put_nowait((next(COUNT), process_event))
 
     execute_process_queue()
-
-
-def save_auth_info(auth_header, source_id):
-    """
-    Store Sources Authentication information given an Source ID.
-
-    This method is called when a Cost Management application is
-    attached to a given Source as well as when an Authentication
-    is created.  We have to handle both cases since an
-    Authentication.create event can occur before a Source is
-    attached to the Cost Management application.
-
-    Authentication is stored in the Sources database table.
-
-    Args:
-        source_id (Integer): Platform Sources ID.
-        auth_header (String): Authentication Header.
-
-    Returns:
-        None
-
-    """
-    source_type = storage.get_source_type(source_id)
-
-    if source_type:
-        sources_network = SourcesHTTPClient(auth_header, source_id)
-    else:
-        LOG.info(f"Source ID not found for ID: {source_id}")
-        return
-
-    try:
-        if source_type == Provider.PROVIDER_OCP:
-            source_details = sources_network.get_source_details()
-            if source_details.get("source_ref"):
-                authentication = {"resource_name": source_details.get("source_ref")}
-            else:
-                raise SourcesHTTPClientError("Unable to find Cluster ID")
-        elif source_type in (Provider.PROVIDER_AWS, Provider.PROVIDER_AWS_LOCAL):
-            authentication = {"resource_name": sources_network.get_aws_role_arn()}
-        elif source_type in (Provider.PROVIDER_AZURE, Provider.PROVIDER_AZURE_LOCAL):
-            authentication = {"credentials": sources_network.get_azure_credentials()}
-        else:
-            LOG.error(f"Unexpected source type: {source_type}")
-            return
-        storage.add_provider_sources_auth_info(source_id, authentication)
-        storage.clear_update_flag(source_id)
-        LOG.info(f"Authentication attached to Source ID: {source_id}")
-    except SourcesHTTPClientError as error:
-        LOG.info(f"Authentication info not available for Source ID: {source_id}")
-        sources_network.set_source_status(str(error))
-
-
-def sources_network_info(source_id, auth_header):
-    """
-    Get additional sources context from Sources REST API.
-
-    Additional details retrieved from the network includes:
-        - Source Name
-        - Source ID Type -> AWS, Azure, or OCP
-        - Authentication: OCP -> Source uid; AWS -> Network call to Sources Authentication Store
-
-    Details are stored in the Sources database table.
-
-    Args:
-        source_id (Integer): Source identifier
-        auth_header (String): Authentication Header.
-
-    Returns:
-        None
-
-    """
-    sources_network = SourcesHTTPClient(auth_header, source_id)
-    source_details = sources_network.get_source_details()
-    source_name = source_details.get("name")
-    source_type_id = int(source_details.get("source_type_id"))
-    source_uuid = source_details.get("uid")
-    source_type_name = sources_network.get_source_type_name(source_type_id)
-    endpoint_id = sources_network.get_endpoint_id()
-
-    if not endpoint_id and source_type_name != SOURCES_OCP_SOURCE_NAME:
-        LOG.warning(f"Unable to find endpoint for Source ID: {source_id}")
-        return
-
-    source_type = SOURCE_PROVIDER_MAP.get(source_type_name)
-    if not source_type:
-        LOG.warning(f"Unexpected source type ID: {source_type_id}")
-        return
-
-    storage.add_provider_sources_network_info(source_id, source_uuid, source_name, source_type, endpoint_id)
-    save_auth_info(auth_header, source_id)
 
 
 def get_consumer():
