@@ -39,6 +39,8 @@ from api.provider.models import Sources
 from kafka_utils.utils import backoff
 from kafka_utils.utils import is_kafka_connected
 from masu.prometheus_stats import KAFKA_CONNECTION_ERRORS_COUNTER
+from masu.prometheus_stats import SOURCES_KAFKA_LOOP_RETRY
+from masu.prometheus_stats import SOURCES_PROVIDER_OP_RETRY_LOOP_COUNTER
 from sources import storage
 from sources.config import Config
 from sources.kafka_message_processor import create_msg_processor
@@ -78,7 +80,8 @@ def _log_process_queue_event(queue, event):
 
 def close_and_set_db_connection():  # pragma: no cover
     """Close the db connection and set to None."""
-    connections[DEFAULT_DB_ALIAS].connection.close()
+    if connections[DEFAULT_DB_ALIAS].connection:
+        connections[DEFAULT_DB_ALIAS].connection.close()
     connections[DEFAULT_DB_ALIAS].connection = None
 
 
@@ -168,6 +171,7 @@ def listen_for_messages_loop(application_source_id):  # pragma: no cover
 
 def rewind_consumer_to_retry(consumer, topic_partition):
     """Helper method to log and rewind kafka consumer for retry."""
+    SOURCES_KAFKA_LOOP_RETRY.inc()
     LOG.info(f"Seeking back to offset: {topic_partition.offset}, partition: {topic_partition.partition}")
     consumer.seek(topic_partition)
     time.sleep(Config.RETRY_SECONDS)
@@ -251,12 +255,13 @@ def execute_koku_provider_op(msg):
         raise SourcesIntegrationError(f"Koku provider error: {account_error}")
     except ValidationError as account_error:
         err_msg = f"Unable to {operation} provider for Source ID: {sources_obj.source_id}. Reason: {account_error}"
-        LOG.error(err_msg)
+        LOG.warning(err_msg)
         sources_client.set_source_status(account_error)
 
 
 def _requeue_provider_sync_message(priority, msg, queue):
     """Helper to requeue provider sync messages."""
+    SOURCES_PROVIDER_OP_RETRY_LOOP_COUNTER.inc()
     time.sleep(Config.RETRY_SECONDS)
     _log_process_queue_event(queue, msg)
     queue.put((priority, msg))
