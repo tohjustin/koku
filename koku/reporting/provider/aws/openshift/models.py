@@ -209,7 +209,7 @@ class OCPAWSTagsSummary(models.Model):
         """Meta for OCPUsageTagSummary."""
 
         db_table = "reporting_ocpawstags_summary"
-        unique_together = ("key", "cost_entry_bill", "namespace")
+        unique_together = ("key", "cost_entry_bill", "namespace", "accounts")
 
     id = models.BigAutoField(primary_key=True)
 

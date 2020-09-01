@@ -203,7 +203,7 @@ class OCPAzureTagsSummary(models.Model):
         """Meta for AzureTagsSummary."""
 
         db_table = "reporting_ocpazuretags_summary"
-        unique_together = ("key", "cost_entry_bill", "namespace")
+        unique_together = ("key", "cost_entry_bill", "namespace", "subscription_guid")
 
     id = models.BigAutoField(primary_key=True)
 

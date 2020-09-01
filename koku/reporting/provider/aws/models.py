@@ -300,7 +300,7 @@ class AWSTagsSummary(models.Model):
         """Meta for OCPUsageTagSummary."""
 
         db_table = "reporting_awstags_summary"
-        unique_together = ("key", "cost_entry_bill")
+        unique_together = ("key", "cost_entry_bill", "accounts")
 
     id = models.BigAutoField(primary_key=True)
 

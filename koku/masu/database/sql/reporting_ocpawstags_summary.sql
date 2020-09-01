@@ -32,7 +32,7 @@ data2(key, values, namespace) AS (SELECT data.key, array_agg(DISTINCT data.value
     data.cluster_alias AS cluster_alias,
     data2.values AS values
     FROM data INNER JOIN data2 ON data.key = data2.key AND data.namespace = data2.namespace
-    ON CONFLICT (key, cost_entry_bill_id, namespace) DO UPDATE SET key = EXCLUDED.key
+    ON CONFLICT (key, cost_entry_bill_id, accounts, namespace) DO UPDATE SET key = EXCLUDED.key
     RETURNING key, id as key_id
     )
 , ins2 AS (

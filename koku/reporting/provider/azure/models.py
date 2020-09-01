@@ -170,7 +170,7 @@ class AzureTagsSummary(models.Model):
         """Meta for AzureTagsSummary."""
 
         db_table = "reporting_azuretags_summary"
-        unique_together = ("key", "cost_entry_bill")
+        unique_together = ("key", "cost_entry_bill", "subscription_guid")
 
     id = models.BigAutoField(primary_key=True)
 

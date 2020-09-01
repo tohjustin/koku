@@ -32,7 +32,7 @@ data2(key, values) AS (SELECT data.key, array_agg(DISTINCT data.value) FROM data
     data.account as accounts,
     data2.values as values
     FROM data INNER JOIN data2 ON data.key = data2.key
-    ON CONFLICT (key, cost_entry_bill_id) DO UPDATE SET key=EXCLUDED.key
+    ON CONFLICT (key, cost_entry_bill_id, accounts) DO UPDATE SET key=EXCLUDED.key
     RETURNING key, id as key_id
 )
 , ins2 AS (
